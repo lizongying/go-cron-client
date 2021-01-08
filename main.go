@@ -2,24 +2,27 @@ package main
 
 import (
 	"crypto/md5"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/robfig/cron/v3"
 	"io"
-	"io/ioutil"
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Task struct {
 	EntryID cron.EntryID
+	Cmd     *Cmd
 	Pid     int
 	Md5     string
 }
+
 type Cmd struct {
 	Id     int
 	Script string
@@ -27,6 +30,36 @@ type Cmd struct {
 	Spec   string
 	Server string
 	Enable bool
+}
+
+type RespAdd struct {
+	Code int
+	Msg  string
+}
+
+type RespPing struct {
+	Code int
+	Msg  string
+}
+
+type RespAddCmd struct {
+	Code int
+	Msg  string
+}
+
+type RespAddRemove struct {
+	Code int
+	Msg  string
+}
+
+type Job struct {
+	Script string
+}
+
+type RespListCmd struct {
+	Code int
+	Msg  string
+	Data []Job
 }
 
 var TaskMap = make(map[int]*Task, 0)
@@ -37,7 +70,14 @@ var (
 	Error   *log.Logger
 )
 
-var Interval = time.Minute
+var OK = 1
+var ERR = 0
+var ServerUri = "127.0.0.1:1234"
+var ClientUri = "127.0.0.1:2234"
+var CodeSuccess = 0
+var Success = "success"
+
+var c = cron.New()
 
 func init() {
 	logFile, err := os.OpenFile("cron.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -50,109 +90,27 @@ func init() {
 }
 
 func main() {
-	run()
-	select {}
-}
-func run() {
-	c := cron.New()
 	c.Start()
-	for {
-		conf, err := ioutil.ReadFile("cron.json")
-		if err != nil {
-			Error.Println("read config file failed")
-			time.Sleep(Interval)
-			continue
-		}
-		var confList []struct {
-			Id     int    `json:"id"`
-			Script string `json:"script"`
-			Dir    string `json:"dir"`
-			Spec   string `json:"spec"`
-			Server string `json:"server"`
-			Enable bool   `json:"enable"`
-		}
-		if err := json.Unmarshal(conf, &confList); err != nil {
-			Error.Println("parse config file failed")
-			time.Sleep(Interval)
-			continue
-		}
-		var cmdList []Cmd
-		for _, cmd := range confList {
-			cmdList = append(cmdList, Cmd{
-				Id:     cmd.Id,
-				Script: cmd.Script,
-				Dir:    cmd.Dir,
-				Spec:   cmd.Spec,
-				Server: cmd.Server,
-				Enable: cmd.Enable,
-			})
-		}
-		for _, cmd := range cmdList {
-			go func(cmd Cmd) {
-				taskId := cmd.Id
-				script := cmd.Script
-				dir := cmd.Dir
-				spec := cmd.Spec
-				server := cmd.Server
-				enable := cmd.Enable
-				if enable {
-					if TaskMap[taskId] == nil {
-						TaskMap[taskId] = &Task{}
-					}
-					taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+server)))
-					entryID := TaskMap[taskId].EntryID
-					if entryID > 0 {
-						//Info.Println("cmd is in cron:", cmd)
-						//修改任务
-						if TaskMap[taskId].Md5 != taskMd5 {
-							entryIDOld := entryID
-							cmdOld := cmd
-							entryID, _ = c.AddFunc(spec, func() {
-								execScript(cmd)
-							})
-							if entryID == 0 {
-								Info.Println("add cmd failed:", cmd)
-								return
-							}
-							TaskMap[taskId].Md5 = taskMd5
-							TaskMap[taskId].EntryID = entryID
-							Info.Println("add cmd from cron:", cmd)
-							c.Remove(entryIDOld)
-							Info.Println("remove cmd from cron:", cmdOld)
-						}
-						return
-					}
-					//增加任务
-					entryID, _ = c.AddFunc(spec, func() {
-						execScript(cmd)
-					})
-					if entryID == 0 {
-						delete(TaskMap, taskId)
-						Info.Println("add cmd failed:", cmd)
-						return
-					}
-					TaskMap[taskId].Md5 = taskMd5
-					TaskMap[taskId].EntryID = entryID
-					Info.Println("add cmd to cron:", cmd)
-				} else {
-					//删除任务
-					if TaskMap[taskId] == nil {
-						//Info.Println("cmd is not in cron:", cmd)
-						return
-					}
-					entryID := TaskMap[taskId].EntryID
-					if entryID == 0 {
-						//Info.Println("cmd is not in cron:", cmd)
-						return
-					}
-					c.Remove(entryID)
-					delete(TaskMap, taskId)
-					Info.Println("remove cmd from cron:", cmd)
-				}
-			}(cmd)
-		}
-		time.Sleep(Interval)
+	client := new(Client)
+	if err := rpc.Register(client); err != nil {
+		Error.Println("Server register failed")
+		return
 	}
+	rpc.HandleHTTP()
+	listen, err := net.Listen("tcp", ClientUri)
+	if err != nil {
+		Error.Println("Server listen failed")
+		return
+	}
+	go func() {
+		if err = http.Serve(listen, nil); err != nil {
+			Error.Println("Server failed")
+			return
+		}
+	}()
+	respAdd := new(RespAdd)
+	client.Add("", respAdd)
+	select {}
 }
 
 func execScript(cmd Cmd) {
@@ -201,4 +159,119 @@ func infoScript(pid int) (string, error) {
 	s = strings.Replace(s, "\n", "", -1)
 	s = strings.Replace(s, " ", "", -1)
 	return s, err
+}
+
+type Client struct {
+	Status int
+	Entry  []cron.Entry
+}
+
+func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
+	taskId := cmd.Id
+	script := cmd.Script
+	dir := cmd.Dir
+	spec := cmd.Spec
+	server := cmd.Server
+	if TaskMap[taskId] == nil {
+		TaskMap[taskId] = &Task{}
+	}
+	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+server)))
+	entryID := TaskMap[taskId].EntryID
+	if entryID > 0 {
+		//Info.Println("cmd is in cron:", cmd)
+		//修改任务
+		if TaskMap[taskId].Md5 != taskMd5 {
+			entryIDOld := entryID
+			cmdOld := cmd
+			entryID, _ = c.AddFunc(spec, func() {
+				execScript(*cmd)
+			})
+			if entryID == 0 {
+				Info.Println("add cmd failed:", cmd)
+				return errors.New(fmt.Sprintf("add cmd failed: %v", cmd))
+			}
+			TaskMap[taskId].Md5 = taskMd5
+			TaskMap[taskId].EntryID = entryID
+			TaskMap[taskId].Cmd = cmd
+			Info.Println("add cmd from cron:", cmd)
+			c.Remove(entryIDOld)
+			Info.Println("remove cmd from cron:", cmdOld)
+		}
+		respAddCmd.Code = CodeSuccess
+		respAddCmd.Msg = Success
+		return nil
+	}
+	//增加任务
+	entryID, _ = c.AddFunc(spec, func() {
+		execScript(*cmd)
+	})
+	if entryID == 0 {
+		delete(TaskMap, taskId)
+		Info.Println("add cmd failed:", cmd)
+		return errors.New(fmt.Sprintf("add cmd failed: %v", cmd))
+	}
+	TaskMap[taskId].Md5 = taskMd5
+	TaskMap[taskId].EntryID = entryID
+	TaskMap[taskId].Cmd = cmd
+	Info.Println("add cmd to cron:", cmd)
+	respAddCmd.Code = CodeSuccess
+	respAddCmd.Msg = Success
+	return nil
+}
+
+func (client *Client) RemoveCmd(cmd *Cmd, respAddRemove *RespAddRemove) error {
+	taskId := cmd.Id
+	if TaskMap[taskId] == nil {
+		//Info.Println("cmd is not in cron:", cmd)
+		return errors.New(fmt.Sprintf("cmd is not in cron: %v", cmd))
+	}
+	entryID := TaskMap[taskId].EntryID
+	if entryID == 0 {
+		//Info.Println("cmd is not in cron:", cmd)
+		return errors.New(fmt.Sprintf("cmd is not in cron: %v", cmd))
+	}
+	c.Remove(entryID)
+	delete(TaskMap, taskId)
+	Info.Println("remove cmd from cron:", cmd)
+	respAddRemove.Code = CodeSuccess
+	respAddRemove.Msg = Success
+	return nil
+}
+func (client *Client) ListCmd(cmd *Cmd, respListCmd *RespListCmd) error {
+	listJob := make([]Job, 0)
+	for _, ii := range TaskMap {
+		listJob = append(listJob, Job{
+			Script: ii.Cmd.Script,
+		})
+	}
+	respListCmd.Code = CodeSuccess
+	respListCmd.Msg = Success
+	respListCmd.Data = listJob
+	return nil
+}
+
+func (client *Client) Add(args string, respAdd *RespAdd) error {
+	client.Status = ERR
+	conn, err := rpc.DialHTTP("tcp", ServerUri)
+	if err != nil {
+		Error.Println("conn failed:", ClientUri)
+		return errors.New("conn failed")
+	}
+	add := conn.Go("Server.Add", ClientUri, respAdd, nil)
+	replyCall := <-add.Done
+	if replyCall.Error != nil {
+		Error.Println("add failed:", ClientUri)
+		return errors.New("add failed")
+	}
+	if respAdd.Code == CodeSuccess {
+		client.Status = OK
+	}
+	Info.Println("add success")
+	return nil
+}
+
+func (client *Client) Ping(args string, respPing *RespPing) error {
+	respPing.Code = OK
+	respPing.Msg = Success
+	return nil
 }
