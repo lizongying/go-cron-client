@@ -28,8 +28,6 @@ type Cmd struct {
 	Script string
 	Dir    string
 	Spec   string
-	Server string
-	Enable bool
 }
 
 type RespAdd struct {
@@ -117,10 +115,6 @@ func execScript(cmd Cmd) {
 	taskId := cmd.Id
 	script := cmd.Script
 	dir := cmd.Dir
-	server := cmd.Server
-	if server != "" {
-		script = fmt.Sprintf("ssh %s %s", server, script)
-	}
 	pid := TaskMap[taskId].Pid
 	if pid > 0 {
 		s, err := infoScript(pid)
@@ -171,11 +165,10 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 	script := cmd.Script
 	dir := cmd.Dir
 	spec := cmd.Spec
-	server := cmd.Server
 	if TaskMap[taskId] == nil {
 		TaskMap[taskId] = &Task{}
 	}
-	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+server)))
+	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec)))
 	entryID := TaskMap[taskId].EntryID
 	if entryID > 0 {
 		//Info.Println("cmd is in cron:", cmd)
