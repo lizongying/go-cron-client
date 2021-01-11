@@ -1,0 +1,6 @@
+client:
+  uri: 127.0.0.1:1234
+server:
+  uri: 127.0.0.1:2234
+log:
+  filename: /Users/lizongying/Temp/log/cron_client.log

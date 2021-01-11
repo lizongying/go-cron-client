@@ -1,3 +1,4 @@
 .DS_Store
 .idea
-cron.log
+cron_client.log
+dev.yml
