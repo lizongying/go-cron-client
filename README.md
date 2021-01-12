@@ -10,16 +10,22 @@ go run main.go -c dev.yml
 
 ### build
 
+linux
+
 ```
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cron_client
 ```
+
+mac
 
 ```
 go build -o cron_client
 ```
 
+run
+
 ```
-./cron
+./cron_client -c example.yml
 ```
 
 ### others
@@ -32,12 +38,11 @@ go build -o cron_client
 * 支持执行目录的配置。
 * 暂时使用文件进行管理。好处是存储安全，简单，通过版本控制能保存历史，也有审核过程。缺点是在一些环境中上线复杂。
 * 配置生效时间为一分钟，可修改代码，未提供配置。
+* 简单的集群管理
 
 ### todo
 
 * 管理
 * 监控
-* 集群
 
-* 为什么没有使用服务注册发现工具？
-为了保持简单性，现阶段暂不支持。
+* 为什么没有使用服务注册发现工具？ 为了保持简单性，现阶段暂不支持。
