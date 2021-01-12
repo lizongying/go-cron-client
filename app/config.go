@@ -12,7 +12,8 @@ import (
 var Conf *Config
 
 type Client struct {
-	Uri string `yaml:"uri" json:"-"`
+	Uri  string `yaml:"uri" json:"-"`
+	Name string `yaml:"name" json:"-"`
 }
 
 type Server struct {
@@ -29,7 +30,7 @@ type Log struct {
 }
 
 type Config struct {
-	Client *Client `yaml:"server" json:"-"`
+	Client *Client `yaml:"client" json:"-"`
 	Server *Server `yaml:"server" json:"-"`
 	Mongo  *Mongo  `yaml:"mongo" json:"-"`
 	Log    *Log    `yaml:"log" json:"-"`

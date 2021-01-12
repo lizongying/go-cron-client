@@ -1,9 +1,11 @@
 # go cron client
 
+结合go-cron-server使用
+
 ### dev
 
 ```
-go run main.go
+go run main.go -c dev.yml
 ```
 
 ### build
