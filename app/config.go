@@ -19,6 +19,7 @@ type Client struct {
 
 type Server struct {
 	Uri      string `yaml:"uri" json:"-"`
+	Name     string `yaml:"name" json:"-"`
 	Interval int    `yaml:"interval" json:"-"`
 }
 

@@ -43,7 +43,10 @@ run
 * server和client的连接时间(interval)，单位秒，默认一秒。
 * 简单的集群管理
 * 为什么没有使用服务注册发现工具？为了保持简洁性，现阶段暂不支持。
+* client重启后任务自动恢复
+* client或server重启后自动连接
 
 ### todo
 
-* ping时，任务检验恢复
+* 多server支持、server选举
+* ui

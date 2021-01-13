@@ -78,6 +78,14 @@ type Client struct {
 	Entry  []cron.Entry
 }
 
+type Server struct {
+	Name   string
+	Uri    string
+	Client *rpc.Client
+}
+
+var Servers = make(map[string]*Server)
+
 var TaskMap = make(map[int]*Task, 0)
 
 var (
@@ -89,6 +97,7 @@ var (
 var OK = 1
 var ERR = 0
 var ServerUri = "127.0.0.1:1234"
+var ServerName = "server_one"
 var Interval = time.Second
 var ClientUri = "127.0.0.1:2234"
 var CodeSuccess = 0
@@ -102,6 +111,7 @@ var c = cron.New()
 func init() {
 	app.InitConfig()
 	ServerUri = app.Conf.Server.Uri
+	ServerName = app.Conf.Server.Name
 	ClientUri = app.Conf.Client.Uri
 	ClientInfo = app.Conf.Client
 	Interval = time.Duration(app.Conf.Server.Interval) * time.Second
@@ -139,7 +149,7 @@ func main() {
 
 func addClient(client *Client) {
 	respAdd := new(RespAdd)
-	if err := client.Add("", respAdd); err != nil {
+	if err := client.Add("Client", respAdd); err != nil {
 		//Error.Println(err.Error())
 	}
 }
@@ -148,6 +158,10 @@ func execScript(cmd Cmd) {
 	taskId := cmd.Id
 	script := cmd.Script
 	dir := cmd.Dir
+	if TaskMap[taskId] == nil {
+		Info.Println("cmd is removed:", cmd)
+		return
+	}
 	pid := TaskMap[taskId].Pid
 	if TaskMap[taskId].State == "RUN" {
 		Info.Println("cmd is in process:", cmd)
@@ -194,8 +208,19 @@ func infoScript(pid int) (string, error) {
 func (client *Client) pingServer() {
 	go func() {
 		for {
-			addClient(client)
 			time.Sleep(Interval)
+			if Servers[ServerName] == nil {
+				addClient(client)
+				continue
+			}
+			respPing := new(RespPing)
+			ping := Servers[ServerName].Client.Go("Server.Ping", "Client", respPing, nil)
+			replyCall := <-ping.Done
+			if replyCall.Error != nil || respPing.Code == CodeError {
+				addClient(client)
+				continue
+			}
+			//Info.Println("Ping ok. client:", client.Name)
 		}
 	}()
 }
@@ -314,7 +339,8 @@ func (client *Client) Add(args string, respAdd *RespAdd) error {
 		return errors.New("add client failed")
 	}
 	client.Status = OK
-	//Info.Println("Add client success. client:", ClientInfo.Name)
+	Servers[ServerName] = &Server{Client: conn}
+	Info.Println("Add client success. client:", ClientInfo.Name)
 	respAdd.Code = CodeSuccess
 	respAdd.Msg = Success
 	return nil

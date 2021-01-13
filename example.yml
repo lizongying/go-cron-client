@@ -4,6 +4,7 @@ client:
   group: "client"
 server:
   uri: 127.0.0.1:2234
+  name: "server_one"
   interval: 1
 log:
   filename: cron_client.log
