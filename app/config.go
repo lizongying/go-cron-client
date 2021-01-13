@@ -12,12 +12,14 @@ import (
 var Conf *Config
 
 type Client struct {
-	Uri  string `yaml:"uri" json:"-"`
-	Name string `yaml:"name" json:"-"`
+	Uri   string `yaml:"uri" json:"-"`
+	Name  string `yaml:"name" json:"-"`
+	Group string `yaml:"group" json:"-"`
 }
 
 type Server struct {
-	Uri string `yaml:"uri" json:"-"`
+	Uri      string `yaml:"uri" json:"-"`
+	Interval int    `yaml:"interval" json:"-"`
 }
 
 type Mongo struct {

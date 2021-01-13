@@ -1,6 +1,9 @@
 client:
   uri: 127.0.0.1:1234
+  name: "client_one"
+  group: "client"
 server:
   uri: 127.0.0.1:2234
+  interval: 1
 log:
   filename: cron_client.log

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Task struct {
@@ -60,11 +61,21 @@ type Job struct {
 	Dir    string `json:"dir"`
 	Spec   string `json:"spec"`
 	Group  string `json:"group"`
+	Prev   string `json:"prev"`
+	Next   string `json:"next"`
+	Pid    int    `json:"pid"`
+	State  string `json:"state"`
 }
 
 type RespListCmd struct {
 	RespCommon
 	Data []Job
+}
+
+type Client struct {
+	Name   string
+	Status int
+	Entry  []cron.Entry
 }
 
 var TaskMap = make(map[int]*Task, 0)
@@ -78,6 +89,7 @@ var (
 var OK = 1
 var ERR = 0
 var ServerUri = "127.0.0.1:1234"
+var Interval = time.Second
 var ClientUri = "127.0.0.1:2234"
 var CodeSuccess = 0
 var CodeError = 1
@@ -92,6 +104,7 @@ func init() {
 	ServerUri = app.Conf.Server.Uri
 	ClientUri = app.Conf.Client.Uri
 	ClientInfo = app.Conf.Client
+	Interval = time.Duration(app.Conf.Server.Interval) * time.Second
 	logFile, err := os.OpenFile(app.Conf.Log.Filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalln("open log file failed")
@@ -120,11 +133,15 @@ func main() {
 			return
 		}
 	}()
+	client.pingServer()
+	select {}
+}
+
+func addClient(client *Client) {
 	respAdd := new(RespAdd)
 	if err := client.Add("", respAdd); err != nil {
 		//Error.Println(err.Error())
 	}
-	select {}
 }
 
 func execScript(cmd Cmd) {
@@ -174,9 +191,13 @@ func infoScript(pid int) (string, error) {
 	return s, err
 }
 
-type Client struct {
-	Status int
-	Entry  []cron.Entry
+func (client *Client) pingServer() {
+	go func() {
+		for {
+			addClient(client)
+			time.Sleep(Interval)
+		}
+	}()
 }
 
 func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
@@ -185,14 +206,14 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 	dir := cmd.Dir
 	spec := cmd.Spec
 	group := cmd.Group
-	if group != "" && group != ClientInfo.Name {
+	if group != "" && ClientInfo.Group != "" && group != ClientInfo.Group {
 		Info.Println("Add cmd failed:", *cmd)
-		return errors.New(fmt.Sprintf("add cmd failed: %v", cmd))
+		return errors.New(fmt.Sprintf("add cmd failed: %v", *cmd))
 	}
 	if TaskMap[taskId] == nil {
 		TaskMap[taskId] = &Task{}
 	}
-	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec)))
+	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+group)))
 	entryID := TaskMap[taskId].EntryID
 	if entryID > 0 {
 		//Info.Println("cmd is in cron:", cmd)
@@ -205,7 +226,7 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 			})
 			if entryID == 0 {
 				Info.Println("Add cmd failed:", *cmd)
-				return errors.New(fmt.Sprintf("add cmd failed: %v", cmd))
+				return errors.New("add cmd failed")
 			}
 			TaskMap[taskId].Md5 = taskMd5
 			TaskMap[taskId].EntryID = entryID
@@ -225,11 +246,12 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 	if entryID == 0 {
 		delete(TaskMap, taskId)
 		Info.Println("Add cmd failed:", *cmd)
-		return errors.New(fmt.Sprintf("add cmd failed: %v", cmd))
+		return errors.New("add cmd failed")
 	}
 	TaskMap[taskId].Md5 = taskMd5
 	TaskMap[taskId].EntryID = entryID
 	TaskMap[taskId].Cmd = cmd
+	TaskMap[taskId].State = "DEF"
 	Info.Println("Add cmd to cron:", *cmd)
 	respAddCmd.Code = CodeSuccess
 	respAddCmd.Msg = Success
@@ -240,12 +262,12 @@ func (client *Client) RemoveCmd(cmd *Cmd, respAddRemove *RespAddRemove) error {
 	taskId := cmd.Id
 	if TaskMap[taskId] == nil {
 		//Info.Println("cmd is not in cron:", cmd)
-		return errors.New(fmt.Sprintf("cmd is not in cron: %v", cmd))
+		return errors.New("cmd is not in cron")
 	}
 	entryID := TaskMap[taskId].EntryID
 	if entryID == 0 {
 		//Info.Println("cmd is not in cron:", cmd)
-		return errors.New(fmt.Sprintf("cmd is not in cron: %v", cmd))
+		return errors.New("cmd is not in cron")
 	}
 	c.Remove(entryID)
 	delete(TaskMap, taskId)
@@ -254,15 +276,21 @@ func (client *Client) RemoveCmd(cmd *Cmd, respAddRemove *RespAddRemove) error {
 	respAddRemove.Msg = Success
 	return nil
 }
+
 func (client *Client) ListCmd(args string, respListCmd *RespListCmd) error {
 	listJob := make([]Job, 0)
 	for _, ii := range TaskMap {
+		entry := c.Entry(ii.EntryID)
 		listJob = append(listJob, Job{
 			Id:     ii.Cmd.Id,
 			Script: ii.Cmd.Script,
 			Dir:    ii.Cmd.Dir,
 			Spec:   ii.Cmd.Spec,
 			Group:  ii.Cmd.Group,
+			Prev:   entry.Prev.Format("2006-01-02 15:04:05"),
+			Next:   entry.Next.Format("2006-01-02 15:04:05"),
+			Pid:    ii.Pid,
+			State:  ii.State,
 		})
 	}
 	respListCmd.Code = CodeSuccess
@@ -272,6 +300,7 @@ func (client *Client) ListCmd(args string, respListCmd *RespListCmd) error {
 }
 
 func (client *Client) Add(args string, respAdd *RespAdd) error {
+	client.Name = ClientInfo.Name
 	client.Status = ERR
 	conn, err := rpc.DialHTTP("tcp", ServerUri)
 	if err != nil {
@@ -285,7 +314,7 @@ func (client *Client) Add(args string, respAdd *RespAdd) error {
 		return errors.New("add client failed")
 	}
 	client.Status = OK
-	Info.Println("Add client success. client:", ClientInfo.Name)
+	//Info.Println("Add client success. client:", ClientInfo.Name)
 	respAdd.Code = CodeSuccess
 	respAdd.Msg = Success
 	return nil
