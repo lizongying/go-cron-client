@@ -22,6 +22,7 @@ type Task struct {
 	Cmd     *Cmd
 	Pid     int
 	Md5     string
+	State   string
 }
 
 type Cmd struct {
@@ -131,16 +132,9 @@ func execScript(cmd Cmd) {
 	script := cmd.Script
 	dir := cmd.Dir
 	pid := TaskMap[taskId].Pid
-	if pid > 0 {
-		s, err := infoScript(pid)
-		if err == nil && len(s) > 0 {
-			switch s[0:1] {
-			case "R",
-				"S":
-				//Info.Println("cmd is in process:", cmd)
-				return
-			}
-		}
+	if TaskMap[taskId].State == "RUN" {
+		Info.Println("cmd is in process:", cmd)
+		return
 	}
 	s := strings.Split(script, " ")
 	shell := exec.Command(s[0], s[1:]...)
@@ -152,6 +146,16 @@ func execScript(cmd Cmd) {
 		Error.Println("cmd run failed:", cmd)
 		return
 	}
+	go func() {
+		if err := shell.Wait(); err != nil {
+			Info.Println("cmd is killed:", cmd)
+			TaskMap[taskId].State = "DIE"
+			return
+		}
+		Info.Println("cmd is finished:", cmd)
+		TaskMap[taskId].State = "FIN"
+	}()
+	TaskMap[taskId].State = "RUN"
 	pid = shell.Process.Pid
 	TaskMap[taskId].Pid = pid
 	Info.Println(pid, shell)
