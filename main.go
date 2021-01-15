@@ -13,7 +13,6 @@ import (
 	"net/rpc"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +31,7 @@ type Cmd struct {
 	Dir    string
 	Spec   string
 	Group  string
+	Enable bool
 }
 
 type RespCommon struct {
@@ -39,19 +39,19 @@ type RespCommon struct {
 	Msg  string
 }
 
-type RespAdd struct {
+type RespClientAdd struct {
 	RespCommon
 }
 
-type RespPing struct {
+type RespClientPing struct {
 	RespCommon
 }
 
-type RespAddCmd struct {
+type RespCmdAdd struct {
 	RespCommon
 }
 
-type RespAddRemove struct {
+type RespCmdRemove struct {
 	RespCommon
 }
 
@@ -61,13 +61,14 @@ type Job struct {
 	Dir    string `json:"dir"`
 	Spec   string `json:"spec"`
 	Group  string `json:"group"`
+	Enable bool   `json:"enable"`
 	Prev   string `json:"prev"`
 	Next   string `json:"next"`
 	Pid    int    `json:"pid"`
 	State  string `json:"state"`
 }
 
-type RespListCmd struct {
+type RespCmdList struct {
 	RespCommon
 	Data []Job
 }
@@ -147,14 +148,7 @@ func main() {
 	select {}
 }
 
-func addClient(client *Client) {
-	respAdd := new(RespAdd)
-	if err := client.Add("Client", respAdd); err != nil {
-		//Error.Println(err.Error())
-	}
-}
-
-func execScript(cmd Cmd) {
+func scriptExec(cmd Cmd) {
 	taskId := cmd.Id
 	script := cmd.Script
 	dir := cmd.Dir
@@ -192,32 +186,25 @@ func execScript(cmd Cmd) {
 	Info.Println(pid, shell)
 }
 
-func infoScript(pid int) (string, error) {
-	shell := exec.Command("ps", "h", "-o", "stat", "-p", strconv.Itoa(pid))
-	out, err := shell.Output()
-	if err != nil {
-		return "", err
-	}
-	s := string(out)
-	s = strings.Replace(s, "STAT", "", -1)
-	s = strings.Replace(s, "\n", "", -1)
-	s = strings.Replace(s, " ", "", -1)
-	return s, err
-}
-
 func (client *Client) pingServer() {
 	go func() {
 		for {
 			time.Sleep(Interval)
 			if Servers[ServerName] == nil {
-				addClient(client)
+				respClientAdd := new(RespClientAdd)
+				if err := client.ClientAdd("Client", respClientAdd); err != nil {
+					//Error.Println(err.Error())
+				}
 				continue
 			}
-			respPing := new(RespPing)
-			ping := Servers[ServerName].Client.Go("Server.Ping", "Client", respPing, nil)
+			respClientPing := new(RespClientPing)
+			ping := Servers[ServerName].Client.Go("Server.ClientPing", "Client", respClientPing, nil)
 			replyCall := <-ping.Done
-			if replyCall.Error != nil || respPing.Code == CodeError {
-				addClient(client)
+			if replyCall.Error != nil || respClientPing.Code == CodeError {
+				respClientAdd := new(RespClientAdd)
+				if err := client.ClientAdd("Client", respClientAdd); err != nil {
+					//Error.Println(err.Error())
+				}
 				continue
 			}
 			//Info.Println("Ping ok. client:", client.Name)
@@ -225,7 +212,7 @@ func (client *Client) pingServer() {
 	}()
 }
 
-func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
+func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 	taskId := cmd.Id
 	script := cmd.Script
 	dir := cmd.Dir
@@ -247,7 +234,7 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 			entryIDOld := entryID
 			cmdOld := cmd
 			entryID, _ = c.AddFunc(spec, func() {
-				execScript(*cmd)
+				scriptExec(*cmd)
 			})
 			if entryID == 0 {
 				Info.Println("Add cmd failed:", *cmd)
@@ -260,13 +247,13 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 			c.Remove(entryIDOld)
 			Info.Println("Remove cmd from cron:", *cmdOld)
 		}
-		respAddCmd.Code = CodeSuccess
-		respAddCmd.Msg = Success
+		respCmdAdd.Code = CodeSuccess
+		respCmdAdd.Msg = Success
 		return nil
 	}
 	//增加任务
 	entryID, _ = c.AddFunc(spec, func() {
-		execScript(*cmd)
+		scriptExec(*cmd)
 	})
 	if entryID == 0 {
 		delete(TaskMap, taskId)
@@ -278,12 +265,12 @@ func (client *Client) AddCmd(cmd *Cmd, respAddCmd *RespAddCmd) error {
 	TaskMap[taskId].Cmd = cmd
 	TaskMap[taskId].State = "DEF"
 	Info.Println("Add cmd to cron:", *cmd)
-	respAddCmd.Code = CodeSuccess
-	respAddCmd.Msg = Success
+	respCmdAdd.Code = CodeSuccess
+	respCmdAdd.Msg = Success
 	return nil
 }
 
-func (client *Client) RemoveCmd(cmd *Cmd, respAddRemove *RespAddRemove) error {
+func (client *Client) CmdRemove(cmd *Cmd, respCmdRemove *RespCmdRemove) error {
 	taskId := cmd.Id
 	if TaskMap[taskId] == nil {
 		//Info.Println("cmd is not in cron:", cmd)
@@ -297,12 +284,12 @@ func (client *Client) RemoveCmd(cmd *Cmd, respAddRemove *RespAddRemove) error {
 	c.Remove(entryID)
 	delete(TaskMap, taskId)
 	Info.Println("Remove cmd from cron:", *cmd)
-	respAddRemove.Code = CodeSuccess
-	respAddRemove.Msg = Success
+	respCmdRemove.Code = CodeSuccess
+	respCmdRemove.Msg = Success
 	return nil
 }
 
-func (client *Client) ListCmd(args string, respListCmd *RespListCmd) error {
+func (client *Client) CmdList(args string, respCmdList *RespCmdList) error {
 	listJob := make([]Job, 0)
 	for _, ii := range TaskMap {
 		entry := c.Entry(ii.EntryID)
@@ -312,19 +299,20 @@ func (client *Client) ListCmd(args string, respListCmd *RespListCmd) error {
 			Dir:    ii.Cmd.Dir,
 			Spec:   ii.Cmd.Spec,
 			Group:  ii.Cmd.Group,
+			Enable: ii.Cmd.Enable,
 			Prev:   entry.Prev.Format("2006-01-02 15:04:05"),
 			Next:   entry.Next.Format("2006-01-02 15:04:05"),
 			Pid:    ii.Pid,
 			State:  ii.State,
 		})
 	}
-	respListCmd.Code = CodeSuccess
-	respListCmd.Msg = Success
-	respListCmd.Data = listJob
+	respCmdList.Code = CodeSuccess
+	respCmdList.Msg = Success
+	respCmdList.Data = listJob
 	return nil
 }
 
-func (client *Client) Add(args string, respAdd *RespAdd) error {
+func (client *Client) ClientAdd(args string, respClientAdd *RespClientAdd) error {
 	client.Name = ClientInfo.Name
 	client.Status = ERR
 	conn, err := rpc.DialHTTP("tcp", ServerUri)
@@ -332,23 +320,23 @@ func (client *Client) Add(args string, respAdd *RespAdd) error {
 		Error.Println("Conn client failed. client:", ClientInfo.Name, err)
 		return errors.New("conn client failed")
 	}
-	add := conn.Go("Server.Add", ClientInfo, respAdd, nil)
+	add := conn.Go("Server.ClientAdd", ClientInfo, respClientAdd, nil)
 	replyCall := <-add.Done
-	if replyCall.Error != nil || respAdd.Code == CodeError {
+	if replyCall.Error != nil || respClientAdd.Code == CodeError {
 		Error.Println("Add client failed. client:", ClientInfo.Name, err)
 		return errors.New("add client failed")
 	}
 	client.Status = OK
 	Servers[ServerName] = &Server{Client: conn}
 	Info.Println("Add client success. client:", ClientInfo.Name)
-	respAdd.Code = CodeSuccess
-	respAdd.Msg = Success
+	respClientAdd.Code = CodeSuccess
+	respClientAdd.Msg = Success
 	return nil
 }
 
-func (client *Client) Ping(args string, respPing *RespPing) error {
+func (client *Client) ClientPing(args string, respClientPing *RespClientPing) error {
 	//Info.Println("Ping ok. client:", ClientInfo.Name)
-	respPing.Code = CodeSuccess
-	respPing.Msg = Success
+	respClientPing.Code = CodeSuccess
+	respClientPing.Msg = Success
 	return nil
 }
