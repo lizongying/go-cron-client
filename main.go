@@ -174,11 +174,13 @@ func scriptExec(cmd Cmd) {
 	go func() {
 		if err := shell.Wait(); err != nil {
 			Info.Println("cmd is killed:", cmd)
-			TaskMap[taskId].State = "DEF"
-			TaskMap[taskId].Pid = 0
+		} else {
+			Info.Println("cmd is finished:", cmd)
+		}
+		if TaskMap[taskId] == nil {
+			Info.Println("cmd is removed:", cmd)
 			return
 		}
-		Info.Println("cmd is finished:", cmd)
 		TaskMap[taskId].State = "DEF"
 		TaskMap[taskId].Pid = 0
 	}()
@@ -221,8 +223,8 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 	spec := cmd.Spec
 	group := cmd.Group
 	if group != "" && ClientInfo.Group != "" && group != ClientInfo.Group {
-		Info.Println("Add cmd failed:", *cmd)
-		return errors.New(fmt.Sprintf("add cmd failed: %v", *cmd))
+		Info.Println("Cmd add failed:", *cmd)
+		return errors.New("cmd add failed")
 	}
 	if TaskMap[taskId] == nil {
 		TaskMap[taskId] = &Task{}
@@ -239,15 +241,15 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 				scriptExec(*cmd)
 			})
 			if entryID == 0 {
-				Info.Println("Add cmd failed:", *cmd)
-				return errors.New("add cmd failed")
+				Info.Println("Cmd add failed", *cmd)
+				return errors.New("cmd add failed")
 			}
 			TaskMap[taskId].Md5 = taskMd5
 			TaskMap[taskId].EntryID = entryID
 			TaskMap[taskId].Cmd = cmd
-			Info.Println("Add cmd from cron:", *cmd)
+			Info.Println("Cmd add from cron:", *cmd)
 			c.Remove(entryIDOld)
-			Info.Println("Remove cmd from cron:", *cmdOld)
+			Info.Println("Cmd remove from cron:", *cmdOld)
 		}
 		respCmdAdd.Code = CodeSuccess
 		respCmdAdd.Msg = Success
@@ -259,14 +261,14 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 	})
 	if entryID == 0 {
 		delete(TaskMap, taskId)
-		Info.Println("Add cmd failed:", *cmd)
-		return errors.New("add cmd failed")
+		Info.Println("Cmd add failed:", *cmd)
+		return errors.New("cmd add failed")
 	}
 	TaskMap[taskId].Md5 = taskMd5
 	TaskMap[taskId].EntryID = entryID
 	TaskMap[taskId].Cmd = cmd
 	TaskMap[taskId].State = "DEF"
-	Info.Println("Add cmd to cron:", *cmd)
+	Info.Println("Cmd add to cron:", *cmd)
 	respCmdAdd.Code = CodeSuccess
 	respCmdAdd.Msg = Success
 	return nil
@@ -319,18 +321,18 @@ func (client *Client) ClientAdd(args string, respClientAdd *RespClientAdd) error
 	client.Status = ERR
 	conn, err := rpc.DialHTTP("tcp", ServerUri)
 	if err != nil {
-		Error.Println("Conn client failed. client:", ClientInfo.Name, err)
-		return errors.New("conn client failed")
+		Error.Println("Client Conn failed. client:", ClientInfo.Name, err)
+		return errors.New("client conn failed")
 	}
 	clientAdd := conn.Go("Server.ClientAdd", ClientInfo, respClientAdd, nil)
 	replyCall := <-clientAdd.Done
 	if replyCall.Error != nil || respClientAdd.Code == CodeError {
-		Error.Println("Add client failed. client:", ClientInfo.Name, err)
-		return errors.New("add client failed")
+		Error.Println("Client add failed. client:", ClientInfo.Name, err)
+		return errors.New("client add failed")
 	}
 	client.Status = OK
 	Servers[ServerName] = &Server{Client: conn}
-	Info.Println("Add client success. client:", ClientInfo.Name)
+	Info.Println("Client add success. client:", ClientInfo.Name)
 	respClientAdd.Code = CodeSuccess
 	respClientAdd.Msg = Success
 	return nil
