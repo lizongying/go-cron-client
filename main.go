@@ -174,11 +174,13 @@ func scriptExec(cmd Cmd) {
 	go func() {
 		if err := shell.Wait(); err != nil {
 			Info.Println("cmd is killed:", cmd)
-			TaskMap[taskId].State = "DIE"
+			TaskMap[taskId].State = "DEF"
+			TaskMap[taskId].Pid = 0
 			return
 		}
 		Info.Println("cmd is finished:", cmd)
-		TaskMap[taskId].State = "FIN"
+		TaskMap[taskId].State = "DEF"
+		TaskMap[taskId].Pid = 0
 	}()
 	TaskMap[taskId].State = "RUN"
 	pid = shell.Process.Pid
