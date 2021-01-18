@@ -198,8 +198,8 @@ func (client *Client) serverPing() {
 				continue
 			}
 			respClientPing := new(RespClientPing)
-			ping := Servers[ServerName].Client.Go("Server.ClientPing", "Client", respClientPing, nil)
-			replyCall := <-ping.Done
+			clientPing := Servers[ServerName].Client.Go("Server.ClientPing", "Client", respClientPing, nil)
+			replyCall := <-clientPing.Done
 			if replyCall.Error != nil || respClientPing.Code == CodeError {
 				respClientAdd := new(RespClientAdd)
 				if err := client.ClientAdd("Client", respClientAdd); err != nil {
@@ -320,8 +320,8 @@ func (client *Client) ClientAdd(args string, respClientAdd *RespClientAdd) error
 		Error.Println("Conn client failed. client:", ClientInfo.Name, err)
 		return errors.New("conn client failed")
 	}
-	add := conn.Go("Server.ClientAdd", ClientInfo, respClientAdd, nil)
-	replyCall := <-add.Done
+	clientAdd := conn.Go("Server.ClientAdd", ClientInfo, respClientAdd, nil)
+	replyCall := <-clientAdd.Done
 	if replyCall.Error != nil || respClientAdd.Code == CodeError {
 		Error.Println("Add client failed. client:", ClientInfo.Name, err)
 		return errors.New("add client failed")
