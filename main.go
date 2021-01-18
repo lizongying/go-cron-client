@@ -144,7 +144,7 @@ func main() {
 			return
 		}
 	}()
-	client.pingServer()
+	client.serverPing()
 	select {}
 }
 
@@ -186,7 +186,7 @@ func scriptExec(cmd Cmd) {
 	Info.Println(pid, shell)
 }
 
-func (client *Client) pingServer() {
+func (client *Client) serverPing() {
 	go func() {
 		for {
 			time.Sleep(Interval)
