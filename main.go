@@ -46,11 +46,11 @@ type RespClientPing struct {
 	RespCommon
 }
 
-type RespCmdAdd struct {
+type RespJobAdd struct {
 	RespCommon
 }
 
-type RespCmdRemove struct {
+type RespJobRemove struct {
 	RespCommon
 }
 
@@ -66,7 +66,7 @@ type Job struct {
 	State  string `json:"state"`
 }
 
-type RespCmdList struct {
+type RespJobList struct {
 	RespCommon
 	Data []Job
 }
@@ -151,12 +151,12 @@ func scriptExec(cmd Cmd) {
 	script := cmd.Script
 	dir := cmd.Dir
 	if TaskMap[taskId] == nil {
-		Info.Println("cmd is removed.", cmd)
+		Info.Println("Job is removed.", cmd)
 		return
 	}
 	pid := TaskMap[taskId].Pid
 	if TaskMap[taskId].State == "RUN" {
-		Info.Println("cmd is in process.", cmd)
+		Info.Println("Job is in process.", cmd)
 		return
 	}
 	s := strings.Split(script, " ")
@@ -166,17 +166,17 @@ func scriptExec(cmd Cmd) {
 	}
 	err := shell.Start()
 	if err != nil {
-		Error.Println("cmd run failed.", cmd)
+		Error.Println("Job run failed.", cmd)
 		return
 	}
 	go func() {
 		if err := shell.Wait(); err != nil {
-			Info.Println("cmd is killed.", cmd)
+			Info.Println("Job is killed.", cmd)
 		} else {
-			Info.Println("cmd is finished.", cmd)
+			Info.Println("Job is finished.", cmd)
 		}
 		if TaskMap[taskId] == nil {
-			Info.Println("cmd is removed.", cmd)
+			Info.Println("Job is removed.", cmd)
 			return
 		}
 		TaskMap[taskId].State = "DEF"
@@ -214,14 +214,14 @@ func (client *Client) serverPing() {
 	}()
 }
 
-func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
+func (client *Client) JobAdd(cmd *Cmd, respJobAdd *RespJobAdd) error {
 	taskId := cmd.Id
 	script := cmd.Script
 	dir := cmd.Dir
 	spec := cmd.Spec
 	group := cmd.Group
 	if group != "" && ClientInfo.Group != "" && group != ClientInfo.Group {
-		Info.Println("Cmd add failed.", *cmd)
+		Info.Println("Job add failed.", *cmd)
 		return errors.New("cmd add failed")
 	}
 	if TaskMap[taskId] == nil {
@@ -230,7 +230,7 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+group)))
 	entryID := TaskMap[taskId].EntryID
 	if entryID > 0 {
-		//Info.Println("cmd is in cron:", cmd)
+		//Info.Println("job is in cron:", cmd)
 		//修改任务
 		if TaskMap[taskId].Md5 != taskMd5 {
 			entryIDOld := entryID
@@ -239,18 +239,18 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 				scriptExec(*cmd)
 			})
 			if entryID == 0 {
-				Info.Println("Cmd add failed.", *cmd)
-				return errors.New("cmd add failed")
+				Info.Println("Job add failed.", *cmd)
+				return errors.New("job add failed")
 			}
 			TaskMap[taskId].Md5 = taskMd5
 			TaskMap[taskId].EntryID = entryID
 			TaskMap[taskId].Cmd = cmd
-			Info.Println("Cmd add success.", *cmd)
+			Info.Println("Job add success.", *cmd)
 			c.Remove(entryIDOld)
-			Info.Println("Cmd remove success.", *cmdOld)
+			Info.Println("Job remove success.", *cmdOld)
 		}
-		respCmdAdd.Code = CodeSuccess
-		respCmdAdd.Msg = Success
+		respJobAdd.Code = CodeSuccess
+		respJobAdd.Msg = Success
 		return nil
 	}
 	//增加任务
@@ -259,43 +259,43 @@ func (client *Client) CmdAdd(cmd *Cmd, respCmdAdd *RespCmdAdd) error {
 	})
 	if entryID == 0 {
 		delete(TaskMap, taskId)
-		Info.Println("Cmd add failed.", *cmd)
-		return errors.New("cmd add failed")
+		Info.Println("Job add failed.", *cmd)
+		return errors.New("job add failed")
 	}
 	TaskMap[taskId].Md5 = taskMd5
 	TaskMap[taskId].EntryID = entryID
 	TaskMap[taskId].Cmd = cmd
 	TaskMap[taskId].State = "DEF"
-	Info.Println("Cmd add success.", *cmd)
-	respCmdAdd.Code = CodeSuccess
-	respCmdAdd.Msg = Success
+	Info.Println("Job add success.", *cmd)
+	respJobAdd.Code = CodeSuccess
+	respJobAdd.Msg = Success
 	return nil
 }
 
-func (client *Client) CmdRemove(cmd *Cmd, respCmdRemove *RespCmdRemove) error {
+func (client *Client) JobRemove(cmd *Cmd, respJobRemove *RespJobRemove) error {
 	taskId := cmd.Id
 	if TaskMap[taskId] == nil {
-		//Info.Println("cmd is not in cron:", cmd)
-		return errors.New("cmd is not in cron")
+		//Info.Println("job is not in cron:", cmd)
+		return errors.New("job is not in cron")
 	}
 	entryID := TaskMap[taskId].EntryID
 	if entryID == 0 {
-		//Info.Println("cmd is not in cron:", cmd)
-		return errors.New("cmd is not in cron")
+		//Info.Println("Job is not in cron.", *cmd)
+		return errors.New("job is not in cron")
 	}
 	c.Remove(entryID)
 	delete(TaskMap, taskId)
-	Info.Println("Cmd remove success.", *cmd)
-	respCmdRemove.Code = CodeSuccess
-	respCmdRemove.Msg = Success
+	Info.Println("Job remove success.", *cmd)
+	respJobRemove.Code = CodeSuccess
+	respJobRemove.Msg = Success
 	return nil
 }
 
-func (client *Client) CmdList(args string, respCmdList *RespCmdList) error {
-	listJob := make([]Job, 0)
+func (client *Client) JobList(args string, respJobList *RespJobList) error {
+	jobList := make([]Job, 0)
 	for _, ii := range TaskMap {
 		entry := c.Entry(ii.EntryID)
-		listJob = append(listJob, Job{
+		jobList = append(jobList, Job{
 			Id:     ii.Cmd.Id,
 			Script: ii.Cmd.Script,
 			Dir:    ii.Cmd.Dir,
@@ -307,9 +307,9 @@ func (client *Client) CmdList(args string, respCmdList *RespCmdList) error {
 			State:  ii.State,
 		})
 	}
-	respCmdList.Code = CodeSuccess
-	respCmdList.Msg = Success
-	respCmdList.Data = listJob
+	respJobList.Code = CodeSuccess
+	respJobList.Msg = Success
+	respJobList.Data = jobList
 	return nil
 }
 
