@@ -17,22 +17,6 @@ import (
 	"time"
 )
 
-type Task struct {
-	EntryID cron.EntryID
-	Cmd     *Cmd
-	Pid     int
-	Md5     string
-	State   string
-}
-
-type Cmd struct {
-	Id     int
-	Script string
-	Dir    string
-	Spec   string
-	Group  string
-}
-
 type RespCommon struct {
 	Code int
 	Msg  string
@@ -55,15 +39,23 @@ type RespJobRemove struct {
 }
 
 type Job struct {
-	Id     int    `json:"id"`
-	Script string `json:"script"`
-	Dir    string `json:"dir"`
-	Spec   string `json:"spec"`
-	Group  string `json:"group"`
-	Prev   string `json:"prev"`
-	Next   string `json:"next"`
-	Pid    int    `json:"pid"`
-	State  string `json:"state"`
+	Id        int          `json:"id"`
+	Name      string       `json:"name"`
+	Project   string       `json:"project"`
+	Creator   string       `json:"creator"`
+	CreatTime string       `json:"creat_time"`
+	Enable    bool         `json:"enable"`
+	Server    string       `json:"server"`
+	Script    string       `json:"script"`
+	Dir       string       `json:"dir"`
+	Spec      string       `json:"spec"`
+	Group     string       `json:"group"`
+	Prev      string       `json:"prev"`
+	Next      string       `json:"next"`
+	Pid       int          `json:"pid"`
+	State     string       `json:"state"`
+	EntryID   cron.EntryID `json:"-"`
+	Md5       string       `json:"-"`
 }
 
 type RespJobList struct {
@@ -85,7 +77,7 @@ type Server struct {
 
 var Servers = make(map[string]*Server)
 
-var TaskMap = make(map[int]*Task, 0)
+var JobList = make(map[int]*Job, 0)
 
 var (
 	Info    *log.Logger
@@ -146,17 +138,17 @@ func main() {
 	select {}
 }
 
-func scriptExec(cmd Cmd) {
-	taskId := cmd.Id
-	script := cmd.Script
-	dir := cmd.Dir
-	if TaskMap[taskId] == nil {
-		Info.Println("Job is removed.", cmd)
+func scriptExec(job Job) {
+	jobId := job.Id
+	script := job.Script
+	dir := job.Dir
+	if JobList[jobId] == nil {
+		Info.Println("Job is removed.", job)
 		return
 	}
-	pid := TaskMap[taskId].Pid
-	if TaskMap[taskId].State == "RUN" {
-		Info.Println("Job is in process.", cmd)
+	pid := JobList[jobId].Pid
+	if JobList[jobId].State == "RUN" {
+		Info.Println("Job is in process.", job)
 		return
 	}
 	s := strings.Split(script, " ")
@@ -166,25 +158,25 @@ func scriptExec(cmd Cmd) {
 	}
 	err := shell.Start()
 	if err != nil {
-		Error.Println("Job run failed.", cmd)
+		Error.Println("Job run failed.", job)
 		return
 	}
 	go func() {
 		if err := shell.Wait(); err != nil {
-			Info.Println("Job is killed.", cmd)
+			Info.Println("Job is killed.", job)
 		} else {
-			Info.Println("Job is finished.", cmd)
+			Info.Println("Job is finished.", job)
 		}
-		if TaskMap[taskId] == nil {
-			Info.Println("Job is removed.", cmd)
+		if JobList[jobId] == nil {
+			Info.Println("Job is removed.", job)
 			return
 		}
-		TaskMap[taskId].State = "DEF"
-		TaskMap[taskId].Pid = 0
+		JobList[jobId].State = "DEF"
+		JobList[jobId].Pid = 0
 	}()
-	TaskMap[taskId].State = "RUN"
+	JobList[jobId].State = "RUN"
 	pid = shell.Process.Pid
-	TaskMap[taskId].Pid = pid
+	JobList[jobId].Pid = pid
 	Info.Println(pid, shell)
 }
 
@@ -214,38 +206,41 @@ func (client *Client) serverPing() {
 	}()
 }
 
-func (client *Client) JobAdd(cmd *Cmd, respJobAdd *RespJobAdd) error {
-	taskId := cmd.Id
-	script := cmd.Script
-	dir := cmd.Dir
-	spec := cmd.Spec
-	group := cmd.Group
+func (client *Client) JobAdd(job *Job, respJobAdd *RespJobAdd) error {
+	jobId := job.Id
+	script := job.Script
+	dir := job.Dir
+	spec := job.Spec
+	group := job.Group
 	if group != "" && ClientInfo.Group != "" && group != ClientInfo.Group {
-		Info.Println("Job add failed.", *cmd)
+		Info.Println("Job add failed.", *job)
 		return errors.New("cmd add failed")
 	}
-	if TaskMap[taskId] == nil {
-		TaskMap[taskId] = &Task{}
+	if JobList[jobId] == nil {
+		JobList[jobId] = &Job{}
 	}
 	taskMd5 := fmt.Sprintf("%x", md5.Sum([]byte(script+dir+spec+group)))
-	entryID := TaskMap[taskId].EntryID
+	entryID := JobList[jobId].EntryID
 	if entryID > 0 {
 		//Info.Println("job is in cron:", cmd)
 		//修改任务
-		if TaskMap[taskId].Md5 != taskMd5 {
+		if JobList[jobId].Md5 != taskMd5 {
 			entryIDOld := entryID
-			cmdOld := cmd
+			cmdOld := job
 			entryID, _ = c.AddFunc(spec, func() {
-				scriptExec(*cmd)
+				scriptExec(*job)
 			})
 			if entryID == 0 {
-				Info.Println("Job add failed.", *cmd)
+				Info.Println("Job add failed.", *job)
 				return errors.New("job add failed")
 			}
-			TaskMap[taskId].Md5 = taskMd5
-			TaskMap[taskId].EntryID = entryID
-			TaskMap[taskId].Cmd = cmd
-			Info.Println("Job add success.", *cmd)
+			JobList[jobId].Md5 = taskMd5
+			JobList[jobId].EntryID = entryID
+			JobList[jobId].Script = script
+			JobList[jobId].Dir = dir
+			JobList[jobId].Spec = spec
+			JobList[jobId].Group = group
+			Info.Println("Job add success.", *job)
 			c.Remove(entryIDOld)
 			Info.Println("Job remove success.", *cmdOld)
 		}
@@ -255,37 +250,40 @@ func (client *Client) JobAdd(cmd *Cmd, respJobAdd *RespJobAdd) error {
 	}
 	//增加任务
 	entryID, _ = c.AddFunc(spec, func() {
-		scriptExec(*cmd)
+		scriptExec(*job)
 	})
 	if entryID == 0 {
-		delete(TaskMap, taskId)
-		Info.Println("Job add failed.", *cmd)
+		delete(JobList, jobId)
+		Info.Println("Job add failed.", *job)
 		return errors.New("job add failed")
 	}
-	TaskMap[taskId].Md5 = taskMd5
-	TaskMap[taskId].EntryID = entryID
-	TaskMap[taskId].Cmd = cmd
-	TaskMap[taskId].State = "DEF"
-	Info.Println("Job add success.", *cmd)
+	JobList[jobId].Md5 = taskMd5
+	JobList[jobId].EntryID = entryID
+	JobList[jobId].Script = script
+	JobList[jobId].Dir = dir
+	JobList[jobId].Spec = spec
+	JobList[jobId].Group = group
+	JobList[jobId].State = "DEF"
+	Info.Println("Job add success.", *job)
 	respJobAdd.Code = CodeSuccess
 	respJobAdd.Msg = Success
 	return nil
 }
 
-func (client *Client) JobRemove(cmd *Cmd, respJobRemove *RespJobRemove) error {
-	taskId := cmd.Id
-	if TaskMap[taskId] == nil {
+func (client *Client) JobRemove(job *Job, respJobRemove *RespJobRemove) error {
+	jobId := job.Id
+	if JobList[jobId] == nil {
 		//Info.Println("job is not in cron:", cmd)
 		return errors.New("job is not in cron")
 	}
-	entryID := TaskMap[taskId].EntryID
+	entryID := JobList[jobId].EntryID
 	if entryID == 0 {
 		//Info.Println("Job is not in cron.", *cmd)
 		return errors.New("job is not in cron")
 	}
 	c.Remove(entryID)
-	delete(TaskMap, taskId)
-	Info.Println("Job remove success.", *cmd)
+	delete(JobList, jobId)
+	Info.Println("Job remove success.", *job)
 	respJobRemove.Code = CodeSuccess
 	respJobRemove.Msg = Success
 	return nil
@@ -293,14 +291,14 @@ func (client *Client) JobRemove(cmd *Cmd, respJobRemove *RespJobRemove) error {
 
 func (client *Client) JobList(args string, respJobList *RespJobList) error {
 	jobList := make([]Job, 0)
-	for _, ii := range TaskMap {
+	for _, ii := range JobList {
 		entry := c.Entry(ii.EntryID)
 		jobList = append(jobList, Job{
-			Id:     ii.Cmd.Id,
-			Script: ii.Cmd.Script,
-			Dir:    ii.Cmd.Dir,
-			Spec:   ii.Cmd.Spec,
-			Group:  ii.Cmd.Group,
+			Id:     ii.Id,
+			Script: ii.Script,
+			Dir:    ii.Dir,
+			Spec:   ii.Spec,
+			Group:  ii.Group,
 			Prev:   entry.Prev.Format("2006-01-02 15:04:05"),
 			Next:   entry.Next.Format("2006-01-02 15:04:05"),
 			Pid:    ii.Pid,
